@@ -8,6 +8,9 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbid
 from django.shortcuts import get_object_or_404
 from django.utils.translation import ugettext as _
 from django.views.generic import View
+from django.db.models import Q
+
+import operator
 
 from backbone.serializers import AllFieldsSerializer
 
@@ -61,6 +64,41 @@ class BackboneAPIView(View):
         """
         qs = self.queryset(request, **kwargs)
 
+        filter_field = request.GET.get('filter_field', None)
+        filter_value = request.GET.get('filter_value', None)
+        filter_field2 = request.GET.get('filter_field2', None)
+        filter_value2 = request.GET.get('filter_value2', None)
+        search_fields = request.GET.get('search_fields', None)
+        search_value = request.GET.get('search_value', None)
+
+        if (search_value is not None and search_fields is not None):
+            mylist = [Q(**{sf+"__icontains" : search_value}) for sf in search_fields.split('|')]
+            qs = qs.filter(reduce(operator.or_, mylist))
+
+        if (filter_field is not None and filter_value is not None):
+
+            print "filter_field:"+filter_field
+            print "filter_value:"+filter_value
+
+            multi = False
+
+            if "|" in filter_field:
+
+                multi=True
+                mylistf = [Q(**{sf : filter_value}) for sf in filter_field.split('|')]
+                qs = qs.filter(reduce(operator.or_, mylistf))
+
+            if "|" in filter_value:
+
+                multi=True
+                mylistf = [Q(**{filter_field : sf}) for sf in filter_value.split('|')]
+                qs = qs.filter(reduce(operator.or_, mylistf))
+            
+            
+            if not multi:
+                qs = qs.filter(**{filter_field: filter_value})
+
+
         if self.display_collection_fields:
             display_fields = self.display_collection_fields
         else:
@@ -77,10 +115,28 @@ class BackboneAPIView(View):
             except EmptyPage:
                 data = _('Invalid `page` parameter: Out of range.')
                 return HttpResponseBadRequest(data)
+        
+
         data = [
             self.serialize(obj, ['id'] + list(display_fields)) for obj in qs
         ]
-        return HttpResponse(self.json_dumps(data), content_type='application/json')
+
+        if self.paginate_by is not None:
+            meta = {
+                'num_pages':paginator.num_pages,
+                'cur_page':int(float(page)),
+                'num_items':paginator.count,
+                }
+        else:
+            meta = {
+                'num_pages':1,
+                'cur_page':1,
+                'num_items':len(data),
+                }
+
+        to_return = {'data':data,'meta':meta}
+
+        return HttpResponse(self.json_dumps(to_return), content_type='application/json')
 
     def post(self, request, id=None, **kwargs):
         """
